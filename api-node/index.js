@@ -6,11 +6,13 @@ app.use(express.json());
 
 const pool = new Pool({
   user: "postgres",
-  host: "localhost",
+  host: "db",
   database: "appdb",
   password: "devpass",
   port: 5432,
 });
+
+const { publish } = require("./event");
 
 app.get("/health", (req, res) => {
   res.json({ status: "ok" });
@@ -24,7 +26,11 @@ app.post("/users", async (req, res) => {
     [name]
   );
 
-  res.json(result.rows[0]);
+  const user = result.rows[0];
+
+  await publish("user_created", user);
+
+  res.json(user);
 });
 
 app.get("/users", async (req, res) => {

@@ -1,0 +1,18 @@
+# Binaries, Tests, and Coverage
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+*.coverprofile
+
+# Dependencies & Local Configuration
+# vendor/
+go.work
+go.work.sum
+.env
+
+# Editor/IDE
+.idea/
+.vscode/

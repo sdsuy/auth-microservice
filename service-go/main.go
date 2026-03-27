@@ -2,8 +2,8 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
 	"log"
+	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 )
@@ -13,22 +13,78 @@ type User struct {
 	Name string `json:"name"`
 }
 
-func main() {
-	conn, err := amqp.Dial("amqp://guest:guest@rabbitmq:5672/")
-	if err != nil {
-		log.Fatal(err)
+// 🔁 Conexión con retry
+func connectRabbitMQ() *amqp.Connection {
+	var conn *amqp.Connection
+	var err error
+
+	for {
+		conn, err = amqp.Dial("amqp://guest:guest@rabbitmq:5672/")
+		if err == nil {
+			log.Println("✅ Connected to RabbitMQ")
+			return conn
+		}
+
+		log.Println("⏳ Waiting for RabbitMQ...")
+		time.Sleep(2 * time.Second)
 	}
+}
+
+func main() {
+	conn := connectRabbitMQ()
 	defer conn.Close()
 
-	ch, _ := conn.Channel()
-	q, _ := ch.QueueDeclare("user_created", false, false, false, false, nil)
-
-	msgs, _ := ch.Consume(q.Name, "", true, false, false, false, nil)
-
-	for msg := range msgs {
-		var user User
-		json.Unmarshal(msg.Body, &user)
-
-		fmt.Println("Procesando usuario:", user)
+	ch, err := conn.Channel()
+	if err != nil {
+		log.Fatal("❌ Failed to open channel:", err)
 	}
+	defer ch.Close()
+
+	// ⚠️ IMPORTANTE: misma config que en Node
+	_, err = ch.QueueDeclare(
+		"user_created",
+		false, // durable (debe coincidir con Node)
+		false,
+		false,
+		false,
+		nil,
+	)
+	if err != nil {
+		log.Fatal("❌ Failed to declare queue:", err)
+	}
+
+	// 👇 Consumir directamente por nombre
+	msgs, err := ch.Consume(
+		"user_created",
+		"",
+		true, // auto-ack (simple para este caso)
+		false,
+		false,
+		false,
+		nil,
+	)
+	if err != nil {
+		log.Fatal("❌ Failed to register consumer:", err)
+	}
+
+	log.Println("👂 Waiting for messages...")
+
+	forever := make(chan bool)
+
+	go func() {
+		for msg := range msgs {
+			log.Println("📩 Raw message:", string(msg.Body))
+
+			var user User
+			err := json.Unmarshal(msg.Body, &user)
+			if err != nil {
+				log.Println("❌ JSON parse error:", err)
+				continue
+			}
+
+			log.Printf("🚀 Procesando usuario: %+v\n", user)
+		}
+	}()
+
+	<-forever
 }
