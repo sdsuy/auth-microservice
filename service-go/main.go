@@ -31,60 +31,70 @@ func connectRabbitMQ() *amqp.Connection {
 }
 
 func main() {
-	conn := connectRabbitMQ()
-	defer conn.Close()
+	for {
+		conn := connectRabbitMQ()
 
-	ch, err := conn.Channel()
-	if err != nil {
-		log.Fatal("❌ Failed to open channel:", err)
-	}
-	defer ch.Close()
+		ch, err := conn.Channel()
+		if err != nil {
+			log.Println("Channel error:", err)
+			time.Sleep(2 * time.Second)
+			continue
+		}
 
-	// ⚠️ IMPORTANTE: misma config que en Node
-	_, err = ch.QueueDeclare(
-		"user_created",
-		false, // durable (debe coincidir con Node)
-		false,
-		false,
-		false,
-		nil,
-	)
-	if err != nil {
-		log.Fatal("❌ Failed to declare queue:", err)
-	}
+		q, err := ch.QueueDeclare(
+			"user_created",
+			false,
+			false,
+			false,
+			false,
+			nil,
+		)
+		if err != nil {
+			log.Println("Queue error:", err)
+			time.Sleep(2 * time.Second)
+			continue
+		}
 
-	// 👇 Consumir directamente por nombre
-	msgs, err := ch.Consume(
-		"user_created",
-		"",
-		true, // auto-ack (simple para este caso)
-		false,
-		false,
-		false,
-		nil,
-	)
-	if err != nil {
-		log.Fatal("❌ Failed to register consumer:", err)
-	}
+		msgs, err := ch.Consume(
+			q.Name,
+			"",
+			true,
+			false,
+			false,
+			false,
+			nil,
+		)
+		if err != nil {
+			log.Println("Consume error:", err)
+			time.Sleep(2 * time.Second)
+			continue
+		}
 
-	log.Println("👂 Waiting for messages...")
+		log.Println("👂 Waiting for messages...")
 
-	forever := make(chan bool)
+		// canal de cierre
+		forever := make(chan bool)
 
-	go func() {
-		for msg := range msgs {
-			log.Println("📩 Raw message:", string(msg.Body))
+		go func() {
+			for msg := range msgs {
+				var user User
+				json.Unmarshal(msg.Body, &user)
 
-			var user User
-			err := json.Unmarshal(msg.Body, &user)
-			if err != nil {
-				log.Println("❌ JSON parse error:", err)
-				continue
+				log.Println("📩 Raw message:", string(msg.Body))
+				log.Println("🚀 Procesando usuario:", user)
 			}
 
-			log.Printf("🚀 Procesando usuario: %+v\n", user)
-		}
-	}()
+			log.Println("❌ Connection lost, retrying...")
+			forever <- true
+		}()
 
-	<-forever
+		<-forever
+
+		// cleanup
+		ch.Close()
+		conn.Close()
+
+		log.Println("🔁 Reconnecting...")
+		time.Sleep(2 * time.Second)
+	}
 }
